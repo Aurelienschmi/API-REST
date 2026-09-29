@@ -78,8 +78,12 @@ app.put("/products/:id", (req, res) => {
     }
     if (product) {
         const updatedProduct = req.body;
-        Object.assign(product, updatedProduct);
-        res.json(product);
+        const productIndex = products.indexOf(product);
+        products[productIndex] = {
+            ...updatedProduct,
+            id: productId,
+        };
+        res.json(products[productIndex]);
     } else {
         res.status(404).json({ message: "Product not found" });
     }
