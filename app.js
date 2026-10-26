@@ -1,21 +1,60 @@
 import express from "express";
 import crypto from "crypto";
+import Joi from "joi";
 
 const app = express();
 
 const user = { username: "admin", password: "admin123" };
 const tokens = {};
 
+const loginSchema = Joi.object({
+    username: Joi.string().trim().min(3).max(50).required(),
+    password: Joi.string().min(8).max(128).required(),
+}).unknown(false).required();
+
+const productFields = {
+    name: Joi.string().trim().min(1).max(100).required(),
+    Price: Joi.number().positive().max(100000).precision(2).required(),
+    description: Joi.string().trim().min(1).max(500).required(),
+};
+
+const productSchema = Joi.object({
+    id: Joi.number().integer().positive().required(),
+    ...productFields,
+}).unknown(false).required();
+
+const productReplacementSchema = Joi.object({
+    id: Joi.number().integer().positive(),
+    ...productFields,
+}).unknown(false).required();
+
+const productPatchSchema = Joi.object({
+    name: Joi.string().trim().min(1).max(100),
+    Price: Joi.number().positive().max(100000).precision(2),
+    description: Joi.string().trim().min(1).max(500),
+}).min(1).unknown(false).required();
+
+const productIdSchema = Joi.number().integer().positive().required();
+
+function sendValidationError(res, error) {
+    return res.status(400).json({
+        message: "Validation error",
+        details: error.details.map((detail) => detail.message),
+    });
+}
 
 app.use(express.json());
 
+// Login
 app.post("/login", (req, res) => {
-    const { username, password } = req.body;
-
-    if (!username || !password) {
-        return res.status(400).json({ message: "Username and password required" });
+    const { error, value } = loginSchema.validate(req.body, {
+        abortEarly: false,
+    });
+    if (error) {
+        return sendValidationError(res, error);
     }
 
+    const { username, password } = value;
     if (username !== user.username || password !== user.password) {
         return res.status(401).json({ message: "Invalid credentials" });
     }
@@ -36,7 +75,11 @@ app.use("/products", (req, res, next) => {
         return res.status(401).json({ message: "Token required" });
     }
 
-    const token = authHeader.split(" ")[1];
+    const [scheme, token] = authHeader.split(" ");
+    if (scheme !== "Bearer" || !token) {
+        return res.status(401).json({ message: "Invalid authorization format" });
+    }
+
     const expiration = tokens[token];
 
     if (!expiration) {
@@ -90,7 +133,11 @@ app.get("/products", (req, res) => {
 
 //Consulter
 app.get("/products/:id", (req, res) => {
-    const productId = parseInt(req.params.id);
+    const { error, value: productId } = productIdSchema.validate(req.params.id);
+    if (error) {
+        return sendValidationError(res, error);
+    }
+
     let product;
     for (const p of products) {
         if (p.id === productId) {
@@ -107,14 +154,38 @@ app.get("/products/:id", (req, res) => {
 
 //ajouter
 app.post("/products", (req, res) => {
-    const newProduct = req.body;
+    const { error, value: newProduct } = productSchema.validate(req.body, {
+        abortEarly: false,
+    });
+    if (error) {
+        return sendValidationError(res, error);
+    }
+
+    if (products.some((product) => product.id === newProduct.id)) {
+        return res.status(409).json({ message: "Product id already exists" });
+    }
+
     products.push(newProduct);
     res.status(201).json(newProduct);
 });
 
 //remplacer
 app.put("/products/:id", (req, res) => {
-    const productId = parseInt(req.params.id);
+    const { error: idError, value: productId } = productIdSchema.validate(
+        req.params.id,
+    );
+    if (idError) {
+        return sendValidationError(res, idError);
+    }
+
+    const { error, value: updatedProduct } = productReplacementSchema.validate(
+        req.body,
+        { abortEarly: false },
+    );
+    if (error) {
+        return sendValidationError(res, error);
+    }
+
     let product;
     for (const p of products) {
         if (p.id === productId) {
@@ -123,7 +194,6 @@ app.put("/products/:id", (req, res) => {
         }
     }
     if (product) {
-        const updatedProduct = req.body;
         const productIndex = products.indexOf(product);
         products[productIndex] = {
             ...updatedProduct,
@@ -137,7 +207,21 @@ app.put("/products/:id", (req, res) => {
 
 //modifier
 app.patch("/products/:id", (req, res) => {
-    const productId = parseInt(req.params.id);
+    const { error: idError, value: productId } = productIdSchema.validate(
+        req.params.id,
+    );
+    if (idError) {
+        return sendValidationError(res, idError);
+    }
+
+    const { error, value: updatedFields } = productPatchSchema.validate(
+        req.body,
+        { abortEarly: false },
+    );
+    if (error) {
+        return sendValidationError(res, error);
+    }
+
     let product;
     for (const p of products) {
         if (p.id === productId) {
@@ -146,7 +230,6 @@ app.patch("/products/:id", (req, res) => {
         }
     }
     if (product) {
-        const updatedFields = req.body;
         Object.assign(product, updatedFields);
         res.json(product);
     } else {
@@ -157,7 +240,11 @@ app.patch("/products/:id", (req, res) => {
 //supprimer
 app.delete("/products/:id", (req, res) => {
     let product;
-    const productId = parseInt(req.params.id);
+    const { error, value: productId } = productIdSchema.validate(req.params.id);
+    if (error) {
+        return sendValidationError(res, error);
+    }
+
     for (const p of products) {
         if (p.id === productId) {
             product = p;
